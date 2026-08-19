@@ -50,7 +50,7 @@ export const ProductDetailClient: React.FC<ProductDetailClientProps> = ({
           productId: v.id,
           flavorId: v.flavor.id,
           flavor: v.flavor,
-          stock: v.stock,
+          stock: (v.stock > 0 ? v.stock : (product.stock > 0 ? product.stock : 0)),
           active: v.active,
         });
       }
@@ -126,7 +126,7 @@ export const ProductDetailClient: React.FC<ProductDetailClientProps> = ({
               const f = item.flavor;
               if (!f) return null;
               const isSelected = item.flavorId === selectedFlavorId;
-              const inStock = item.stock > 0;
+              const inStock = (product && product.stock > 0) || (item.stock && item.stock > 0);
 
               return (
                 <button
