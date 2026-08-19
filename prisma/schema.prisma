@@ -1,0 +1,400 @@
+// Prisma schema for Distributeur Chips 09
+// Production B2B Algerian Chips Distribution Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  customer
+  driver
+  admin
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  preparing
+  out_for_delivery
+  delivered
+  cancelled
+}
+
+enum MerchantType {
+  RETAIL
+  WHOLESALE
+  SUPER_WHOLESALE
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                    String              @id @default(cuid())
+  name                  String
+  email                 String              @unique
+  passwordHash          String?
+  googleId              String?             @unique
+  phone                 String?
+  companyName           String?
+  wilaya                String?
+  address               String?
+  role                  Role                @default(customer)
+  merchantType          MerchantType?       @default(RETAIL)
+  verificationStatus    VerificationStatus  @default(PENDING)
+  commercialRegisterUrl String?
+  commercialRegisterName String?
+  rejectionReason       String?
+  reviewedAt            DateTime?
+  reviewedBy            String?
+  active                Boolean             @default(true)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  orders                Order[]
+  invoices              Invoice[]
+  resetTokens           PasswordResetToken[]
+  resetOtps             PasswordResetOtp[]
+  notifications         Notification[]
+  driverProfile         Driver?
+  favorites             Favorite[]
+  addresses             CustomerAddress[]
+  cart                  Cart?
+
+  @@index([email])
+  @@index([role])
+  @@index([verificationStatus])
+  @@index([merchantType])
+}
+
+model PasswordResetOtp {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  otpHash    String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+model Brand {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  arabicName  String
+  slug        String    @unique
+  logoUrl     String?
+  description String?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  products    Product[]
+
+  @@index([slug])
+  @@index([active])
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  arabicName  String
+  slug        String    @unique
+  description String?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  products    Product[]
+
+  @@index([slug])
+}
+
+model Flavor {
+  id             String          @id @default(cuid())
+  name           String          @unique
+  arabicName     String
+  slug           String          @unique
+  color          String?
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+
+  products       Product[]
+  productFlavors ProductFlavor[]
+  cartItems      CartItem[]
+
+  @@index([slug])
+}
+
+model ProductFlavor {
+  id             String         @id @default(cuid())
+  productId      String
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  flavorId       String
+  flavor         Flavor         @relation(fields: [flavorId], references: [id], onDelete: Restrict)
+  stock          Int            @default(0) // Available cartons for this flavor
+  active         Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  cartItems      CartItem[]
+  orderItems     OrderItem[]
+  inventoryLogs  InventoryLog[]
+
+  @@unique([productId, flavorId])
+  @@index([productId])
+  @@index([flavorId])
+}
+
+model Product {
+  id                String          @id @default(cuid())
+  name              String
+  arabicName        String
+  slug              String          @unique
+  brandId           String
+  brand             Brand           @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  flavorId          String?
+  flavor            Flavor?         @relation(fields: [flavorId], references: [id], onDelete: SetNull)
+  categoryId        String?
+  categoryRef       Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category          String          @default("chips")
+  description       String?
+  arabicDescription String?
+  imageUrl          String?
+  unitPrice         Float
+  cartonQuantity    Int             @default(20)
+  cartonPrice       Float           // Base carton price
+  retailPrice       Float?          // Carton price for Approved Retailers
+  wholesalePrice    Float?          // Carton price for Approved Wholesalers
+  superWholesalePrice Float?        // Carton price for Approved Super Wholesalers
+  stock             Int             @default(0) // Total available cartons
+  lowStockThreshold Int             @default(10)
+  active            Boolean         @default(true)
+  featured          Boolean         @default(false)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  flavors           ProductFlavor[]
+  orderItems        OrderItem[]
+  cartItems         CartItem[]
+  inventoryLogs     InventoryLog[]
+  favorites         Favorite[]
+
+  @@index([brandId])
+  @@index([flavorId])
+  @@index([categoryId])
+  @@index([active])
+  @@index([featured])
+}
+
+model Cart {
+  id        String     @id @default(cuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt DateTime   @updatedAt
+  createdAt DateTime   @default(now())
+
+  items     CartItem[]
+}
+
+model CartItem {
+  id              String         @id @default(cuid())
+  cartId          String
+  cart            Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  flavorId        String?
+  flavor          Flavor?        @relation(fields: [flavorId], references: [id], onDelete: SetNull)
+  productFlavorId String?
+  productFlavor   ProductFlavor? @relation(fields: [productFlavorId], references: [id], onDelete: SetNull)
+  cartonsCount    Int            @default(1)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([cartId, productId, flavorId])
+  @@index([cartId])
+  @@index([productId])
+  @@index([flavorId])
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@index([productId])
+}
+
+model CustomerAddress {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("المتجر الرئيسي")
+  wilaya    String
+  address   String
+  phone     String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  orderNumber  String      @unique
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  customerName String
+  phone        String
+  wilaya       String
+  address      String
+  notes        String?
+  status       OrderStatus @default(pending)
+  totalAmount  Float
+  driverId     String?
+  driver       Driver?     @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  items        OrderItem[]
+  invoice      Invoice?
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id              String         @id @default(cuid())
+  orderId         String
+  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productFlavorId String?
+  productFlavor   ProductFlavor? @relation(fields: [productFlavorId], references: [id], onDelete: SetNull)
+  productName     String
+  brandName       String
+  flavorName      String?
+  merchantType    String?        // Snapshot of merchant tier at order placement
+  cartonQuantity  Int
+  cartonsCount    Int
+  unitPrice       Float
+  cartonPrice     Float
+  totalPrice      Float
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Invoice {
+  id            String    @id @default(cuid())
+  invoiceNumber String    @unique
+  orderId       String    @unique
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  amount        Float
+  status        String    @default("issued") // issued, paid, cancelled
+  issuedAt      DateTime  @default(now())
+
+  @@index([userId])
+  @@index([orderId])
+}
+
+model Driver {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String
+  vehicle   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  orders    Order[]
+
+  @@index([active])
+}
+
+model InventoryLog {
+  id              String         @id @default(cuid())
+  productId       String
+  product         Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productFlavorId String?
+  productFlavor   ProductFlavor? @relation(fields: [productFlavorId], references: [id], onDelete: SetNull)
+  flavorName      String?
+  type            String         // restock, sale, adjustment
+  quantityChange  Int
+  remainingStock  Int
+  note            String?
+  createdAt       DateTime       @default(now())
+
+  @@index([productId])
+}
+
+model News {
+  id            String   @id @default(cuid())
+  title         String
+  arabicTitle   String
+  content       String
+  arabicContent String
+  published     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Offer {
+  id              String    @id @default(cuid())
+  title           String
+  arabicTitle     String
+  description     String?
+  discountPercent Float?
+  bundlePrice     Float?
+  active          Boolean   @default(true)
+  validUntil      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("info")
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+}
