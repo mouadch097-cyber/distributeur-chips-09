@@ -1,86 +1,78 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFullCurrentUser } from '@/lib/auth';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
+import { put } from '@vercel/blob';
 
-// Allowed MIME types and corresponding safe extensions
-const ALLOWED_MIME_TYPES: Record<string, string> = {
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-};
-
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+// Allowed MIME types for public images
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
+const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
 
 export async function POST(request: NextRequest) {
   try {
+    // 1. Authenticate Admin
     const user = await getFullCurrentUser();
     if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: 'غير مصرح: رفع الصور مخصص للمدير فقط' }, { status: 403 });
+      return NextResponse.json({ error: 'غير مصرح لك برفع الصور' }, { status: 403 });
     }
 
+    // 2. Parse Multipart Form Data
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
-    const requestedFolder = formData.get('folder') as string | null;
+    const folder = (formData.get('folder') as string) || 'products';
 
     if (!file) {
-      return NextResponse.json({ error: 'يرجى اختيار ملف صورة صالح' }, { status: 400 });
+      return NextResponse.json({ error: 'لم يتم اختيار أي ملف' }, { status: 400 });
     }
 
-    // Validate size
-    if (file.size > MAX_FILE_SIZE) {
+    if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
-        { error: 'حجم الصورة يتجاوز الحد الأقصى المسموح به (5 ميغابايت).' },
+        { error: 'نوع الملف غير مدعوم. يرجى رفع صورة (JPG, PNG, WebP, SVG)' },
         { status: 400 }
       );
     }
 
-    // Validate MIME type
-    const mimeType = file.type.toLowerCase();
-    const extension = ALLOWED_MIME_TYPES[mimeType];
-
-    if (!extension) {
+    if (file.size > MAX_SIZE) {
       return NextResponse.json(
-        { error: 'نوع الملف غير مدعوم. الأنواع المسموح بها هي: JPG, JPEG, PNG, WEBP فقط.' },
+        { error: 'حجم الصورة كبير جداً. الحد الأقصى هو 5 ميجابايت' },
         { status: 400 }
       );
     }
 
-    // Determine safe subfolder
-    const subfolder = requestedFolder === 'brands' ? 'brands' : 'products';
-    const prefix = subfolder === 'brands' ? 'brand' : 'prod';
+    // 3. Convert File to Buffer for reliable serverless upload
+    const cleanFolderName = folder.replace(/[^a-zA-Z0-9_-]/g, '');
+    const cleanFileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    const blobPathname = `${cleanFolderName}/${cleanFileName}`;
 
-    // Ensure uploads directory exists
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads', subfolder);
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
-    // Generate random, collision-resistant, secure file name
-    const randomSuffix = crypto.randomBytes(8).toString('hex');
-    const safeFileName = `${prefix}-${Date.now()}-${randomSuffix}${extension}`;
-    const filePath = path.join(uploadsDir, safeFileName);
-
-    // Convert to Buffer and write file
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    await fs.promises.writeFile(filePath, buffer);
 
-    const publicUrl = `/uploads/${subfolder}/${safeFileName}`;
+    // 4. Upload to Vercel Blob (reads token from process.env.BLOB_READ_WRITE_TOKEN)
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
 
+    if (!blobToken) {
+      console.error('[Vercel Blob Config Error]: BLOB_READ_WRITE_TOKEN is missing in environment variables.');
+      return NextResponse.json(
+        { error: 'خدمة تخزين الصور غير مهيأة في بيئة الإنتاج. يرجى التأكد من ربط Vercel Blob.' },
+        { status: 500 }
+      );
+    }
+
+    const blob = await put(blobPathname, buffer, {
+      access: 'public',
+      contentType: file.type,
+      token: blobToken,
+      addRandomSuffix: true,
+    });
+
+    console.log(`[Vercel Blob] Upload success: ${blob.url}`);
     return NextResponse.json({
       success: true,
-      url: publicUrl,
-      fileName: safeFileName,
-      size: file.size,
-      folder: subfolder,
+      url: blob.url,
+      pathname: blob.pathname,
     });
-  } catch (error) {
-    console.error('Image upload error:', error);
+  } catch (error: any) {
+    console.error(`[Vercel Blob Upload Error]: name=${error?.name} | message=${error?.message}`);
     return NextResponse.json(
-      { error: 'حدث خطأ أثناء رفع وحفظ الصورة' },
+      { error: 'حدث خطأ أثناء رفع وحفظ الصورة. يرجى المحاولة مرة أخرى.' },
       { status: 500 }
     );
   }
